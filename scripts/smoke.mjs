@@ -4,6 +4,7 @@ import fs from "node:fs";
 const require = createRequire(import.meta.url);
 const puppeteer = require("C:/Users/Aleck's Corp/node_modules/puppeteer");
 const out = path.resolve("artifacts");
+const target = process.env.TARGET_URL || "http://localhost:3000";
 fs.mkdirSync(out, { recursive: true });
 const browser = await puppeteer.launch({ headless: true, executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", args: ["--no-sandbox"] });
 const page = await browser.newPage();
@@ -21,7 +22,7 @@ const clickText = async (text) => {
 const textExists = async text => page.evaluate(label => document.body.innerText.includes(label), text);
 
 await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
-await page.goto("http://localhost:3000", { waitUntil: "networkidle2" });
+await page.goto(target, { waitUntil: "networkidle2" });
 if (!(await textExists("Tu próxima dirección"))) throw new Error("Spanish hero missing");
 for (let y = 0; y < await page.evaluate(() => document.body.scrollHeight); y += 750) {
   await page.evaluate(scrollY => window.scrollTo(0, scrollY), y);
@@ -69,7 +70,7 @@ await page.type("#contact-message", "Looking for an oceanfront property.");
 await page.click('#contacto button[type="submit"]');
 if (!(await textExists("Demo complete"))) throw new Error("Contact local success missing");
 await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1 });
-await page.goto("http://localhost:3000", { waitUntil: "networkidle2" });
+await page.goto(target, { waitUntil: "networkidle2" });
 const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
 if (overflow > 1) throw new Error(`Mobile horizontal overflow: ${overflow}px`);
 await page.screenshot({ path: path.join(out,"mobile-home.png"), fullPage: true });
