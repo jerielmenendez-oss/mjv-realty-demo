@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-ivory: #f8f5ef;
+  --color-ivory-dark: #eee9e0;
+  --color-charcoal: #171714;
+  --color-charcoal-light: #2b2b27;
+  --color-sand: #c8b696;
+  --color-sand-light: #ded3c1;
+  --color-sand-dark: #98866b;
+  --color-sea: #6f9c98;
+  --color-sea-light: #a8cbc5;
+  --color-sea-dark: #416f6c;
+  --color-gold: #b58d50;
+  --font-serif: Georgia, "Times New Roman", serif;
+  --font-sans: "Helvetica Neue", Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; overflow-x: hidden; }
+body { margin: 0; overflow-x: hidden; background: var(--color-ivory); color: var(--color-charcoal); font-family: var(--font-sans); }
+button, a, select, input, textarea { outline-offset: 4px; }
+button { cursor: pointer; }
+::selection { background: var(--color-sea-light); color: var(--color-charcoal); }
+.property-card { transition: transform .45s cubic-bezier(.22,1,.36,1), box-shadow .45s; }
+.property-card:hover { transform: translateY(-5px); box-shadow: 0 28px 70px rgba(24,24,20,.13); }
+.sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
