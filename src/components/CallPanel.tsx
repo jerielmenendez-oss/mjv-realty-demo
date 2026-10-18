@@ -7,7 +7,7 @@ import { t } from "@/lib/i18n";
 import { listings } from "@/lib/listings";
 import { cn } from "@/lib/utils";
 
-type CallState = "idle" | "connecting" | "connected" | "speaking" | "ended";
+type CallState = "idle" | "connecting" | "connected" | "speaking" | "ended" | "error";
 
 export default function CallPanel() {
   const { lang, callPanelOpen, callPropertyId, closeCallPanel } = useApp();
@@ -34,10 +34,12 @@ export default function CallPanel() {
   const resetAndClose = useCallback(async () => {
     clearTimers();
     window.speechSynthesis?.cancel();
-    if (vapiRef.current) { try { vapiRef.current.stop(); } catch {} vapiRef.current = null; }
+    const client = vapiRef.current;
+    vapiRef.current = null;
     setCallState("idle"); setShowTourForm(false); setTourSubmitted(false); setLiveMode(false);
     setTourData({ name: "", date: "", time: "" });
     closeCallPanel();
+    if (client) { try { await client.stop(); } catch {} }
   }, [clearTimers, closeCallPanel]);
 
   useEffect(() => {
@@ -49,19 +51,56 @@ export default function CallPanel() {
 
   const handleStartCall = useCallback(async () => {
     setCallState("connecting");
-    const publicKey = process.env.NEXT_PUBLIC_VAPI_PUBLIC_KEY;
+    // This browser key is intentionally public and is restricted in Vapi to
+    // this site's origin and the single MJV assistant; transient assistants are disabled.
+    const publicKey = process.env.NEXT_PUBLIC_VAPI_PUBLIC_KEY || "cdcc43db-7db2-4ce2-9065-a512b8d0dc36";
     const assistantId = process.env.NEXT_PUBLIC_VAPI_ASSISTANT_ID || "0af4f756-17d6-4018-8fa9-9780c97f5728";
     if (publicKey) {
+      let vapi: Vapi | null = null;
       try {
-        const vapi = new Vapi(publicKey);
-        vapiRef.current = vapi;
-        vapi.on("call-start", () => { setLiveMode(true); setCallState("connected"); });
-        vapi.on("speech-start", () => setCallState("speaking"));
-        vapi.on("speech-end", () => setCallState("connected"));
-        vapi.on("call-end", () => { setCallState("ended"); setShowTourForm(true); });
+        const client = new Vapi(publicKey);
+        vapi = client;
+        vapiRef.current = client;
+        const handleFatalError = () => {
+          if (vapiRef.current !== client) return;
+          vapiRef.current = null;
+          setLiveMode(false);
+          setCallState("error");
+          void client.stop().catch(() => {});
+        };
+        vapi.on("call-start", () => {
+          if (vapiRef.current !== client) return;
+          setLiveMode(true);
+          setCallState("connected");
+        });
+        vapi.on("speech-start", () => {
+          if (vapiRef.current === client) setCallState("speaking");
+        });
+        vapi.on("speech-end", () => {
+          if (vapiRef.current === client) setCallState("connected");
+        });
+        vapi.on("call-end", () => {
+          if (vapiRef.current !== client) return;
+          vapiRef.current = null;
+          setLiveMode(false);
+          setCallState("ended");
+          setShowTourForm(true);
+        });
+        // Audio-level observation can fail without ending a call. The SDK's
+        // general error and call-start-failed events are treated as fatal.
+        vapi.on("local-audio-level-observer-error", () => {});
+        vapi.on("error", handleFatalError);
+        vapi.on("call-start-failed", handleFatalError);
         await vapi.start(assistantId, { variableValues: { propertyTitle: property?.title[lang] || "consulta general", propertyLocation: property ? `${property.neighborhood}, ${property.municipality}` : "Puerto Rico" } });
         return;
-      } catch { vapiRef.current = null; }
+      } catch {
+        if (vapiRef.current !== vapi) return;
+        vapiRef.current = null;
+        setLiveMode(false);
+        setCallState("error");
+        if (vapi) { try { await vapi.stop(); } catch {} }
+        return;
+      }
     }
     const greeting = lang === "es" ? `Hola, soy el concierge virtual de MJV Realty. Puedo orientarte sobre ${property?.title.es || "nuestras propiedades de demostración"}. ¿Qué te gustaría conocer?` : `Hi, I'm MJV Realty's virtual concierge. I can guide you through ${property?.title.en || "our demo properties"}. What would you like to know?`;
     timers.current.push(window.setTimeout(() => setCallState("connected"), 750));
@@ -81,10 +120,13 @@ export default function CallPanel() {
     timers.current.push(window.setTimeout(() => setCallState("connected"), 4500));
   };
 
-  const handleEndCall = () => {
+  const handleEndCall = async () => {
     clearTimers(); window.speechSynthesis?.cancel();
-    if (vapiRef.current) { vapiRef.current.stop(); vapiRef.current = null; }
+    const client = vapiRef.current;
+    vapiRef.current = null;
+    setLiveMode(false);
     setCallState("ended"); setShowTourForm(true);
+    if (client) { try { await client.stop(); } catch {} }
   };
 
   if (!callPanelOpen) return null;
@@ -99,9 +141,10 @@ export default function CallPanel() {
           <span className="absolute inset-3 rounded-full border border-sea/25" />
           <div className={cn("relative grid size-24 place-items-center rounded-full text-4xl text-white transition", callState === "ended" ? "bg-charcoal/45" : "bg-sea-dark")}>⌕</div>
         </div>
-        <p aria-live="polite" className="min-h-6 text-xs font-semibold uppercase tracking-[.16em] text-charcoal/55">{callState === "connecting" && tr.call.connecting}{callState === "connected" && tr.call.connected}{callState === "speaking" && tr.call.speaking}{callState === "ended" && tr.call.ended}</p>
+        <p aria-live="polite" className="min-h-6 text-xs font-semibold uppercase tracking-[.16em] text-charcoal/55">{callState === "connecting" && tr.call.connecting}{callState === "connected" && tr.call.connected}{callState === "speaking" && tr.call.speaking}{callState === "ended" && tr.call.ended}{callState === "error" && (lang === "es" ? "No se pudo iniciar la llamada" : "The call could not start")}</p>
         {callState === "idle" && <button onClick={() => void handleStartCall()} className="mt-5 w-full rounded-full bg-sea-dark px-5 py-4 text-xs font-semibold uppercase tracking-[.14em] text-white hover:bg-charcoal">{tr.call.start}</button>}
-        {(callState === "connected" || callState === "speaking") && <div className="mt-6 w-full"><p className="mb-3 text-center text-xs text-charcoal/45">{lang === "es" ? "Prueba una pregunta" : "Try a question"}</p><div className="grid grid-cols-3 gap-2"><button onClick={() => answer("price")} className="rounded-xl border border-charcoal/12 bg-white px-2 py-3 text-xs">{lang === "es" ? "Precio" : "Price"}</button><button onClick={() => answer("amenities")} className="rounded-xl border border-charcoal/12 bg-white px-2 py-3 text-xs">{lang === "es" ? "Amenidades" : "Amenities"}</button><button onClick={() => answer("tour")} className="rounded-xl border border-charcoal/12 bg-white px-2 py-3 text-xs">{lang === "es" ? "Visita" : "Tour"}</button></div><button onClick={handleEndCall} className="mt-4 w-full rounded-full border border-red-700/20 px-5 py-3 text-xs font-semibold uppercase tracking-[.12em] text-red-700">{tr.call.end}</button></div>}
+        {callState === "error" && <button onClick={() => void handleStartCall()} className="mt-5 w-full rounded-full bg-sea-dark px-5 py-4 text-xs font-semibold uppercase tracking-[.14em] text-white hover:bg-charcoal">{lang === "es" ? "Intentar de nuevo" : "Try again"}</button>}
+        {(callState === "connected" || callState === "speaking") && <div className="mt-6 w-full"><p className="mb-3 text-center text-xs text-charcoal/45">{lang === "es" ? "Prueba una pregunta" : "Try a question"}</p><div className="grid grid-cols-3 gap-2"><button onClick={() => answer("price")} className="rounded-xl border border-charcoal/12 bg-white px-2 py-3 text-xs">{lang === "es" ? "Precio" : "Price"}</button><button onClick={() => answer("amenities")} className="rounded-xl border border-charcoal/12 bg-white px-2 py-3 text-xs">{lang === "es" ? "Amenidades" : "Amenities"}</button><button onClick={() => answer("tour")} className="rounded-xl border border-charcoal/12 bg-white px-2 py-3 text-xs">{lang === "es" ? "Visita" : "Tour"}</button></div><button onClick={() => void handleEndCall()} className="mt-4 w-full rounded-full border border-red-700/20 px-5 py-3 text-xs font-semibold uppercase tracking-[.12em] text-red-700">{tr.call.end}</button></div>}
         {showTourForm && !tourSubmitted && <form onSubmit={(event) => { event.preventDefault(); setTourSubmitted(true); }} className="mt-7 w-full space-y-3 border-t border-charcoal/10 pt-6"><h3 className="font-serif text-xl">{tr.call.tourForm}</h3><label className="sr-only" htmlFor="tour-name">{tr.call.tourName}</label><input id="tour-name" required value={tourData.name} onChange={(e) => setTourData({...tourData,name:e.target.value})} placeholder={tr.call.tourName} className="w-full rounded-xl border border-charcoal/15 bg-white px-4 py-3 text-sm"/><div className="grid grid-cols-2 gap-2"><input type="date" required value={tourData.date} onChange={(e) => setTourData({...tourData,date:e.target.value})} aria-label={tr.call.tourDate} className="rounded-xl border border-charcoal/15 bg-white px-3 py-3 text-sm"/><input type="time" required value={tourData.time} onChange={(e) => setTourData({...tourData,time:e.target.value})} aria-label={tr.call.tourTime} className="rounded-xl border border-charcoal/15 bg-white px-3 py-3 text-sm"/></div><button className="w-full rounded-full bg-charcoal py-3 text-xs font-semibold uppercase tracking-[.12em] text-white">{tr.call.tourSubmit}</button><p className="text-center text-[10px] text-charcoal/40">{tr.call.tourDisclaimer}</p></form>}
         {tourSubmitted && <div className="mt-7 w-full rounded-2xl border border-sea/25 bg-sea/10 p-5 text-center"><p className="font-medium text-sea-dark">✓ {tr.call.tourSuccess}</p><p className="mt-2 text-[10px] text-charcoal/45">{tr.call.tourDisclaimer}</p></div>}
       </div>
